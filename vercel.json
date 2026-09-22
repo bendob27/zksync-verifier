@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm run build",
+  "outputDirectory": "artifacts/zksync-unlock-parser/dist/public",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "functions": {
+    "api/index.mjs": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.mjs" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}

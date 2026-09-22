@@ -1,0 +1,339 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: ZKsync Token Unlock Verification API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: auth
+    description: Authentication
+  - name: verification
+    description: Token unlock verification
+  - name: sheets
+    description: Google Sheets data
+  - name: ocr
+    description: OCR screenshot processing
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /auth:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /auth/check:
+    get:
+      operationId: checkAuth
+      tags: [auth]
+      summary: Check if authenticated
+      responses:
+        "200":
+          description: Auth status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /verify:
+    post:
+      operationId: verifyTransactions
+      tags: [verification]
+      summary: Upload Excel and verify transactions
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+                - file
+      responses:
+        "200":
+          description: Verification results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationResponse"
+        "400":
+          description: Invalid file
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /sheets:
+    get:
+      operationId: getSheetsStatus
+      tags: [sheets]
+      summary: Fetch current sheet data and sync status
+      responses:
+        "200":
+          description: Sheet sync status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SheetsStatusResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /ocr:
+    post:
+      operationId: ocrScreenshots
+      tags: [ocr]
+      summary: Upload screenshots for OCR extraction
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+              required:
+                - files
+      responses:
+        "200":
+          description: OCR results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OcrResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    LoginRequest:
+      type: object
+      properties:
+        password:
+          type: string
+      required:
+        - password
+    AuthResponse:
+      type: object
+      properties:
+        authenticated:
+          type: boolean
+        message:
+          type: string
+      required:
+        - authenticated
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+    CheckStatus:
+      type: string
+      enum:
+        - GREEN
+        - YELLOW
+        - RED
+    CheckDetail:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/CheckStatus"
+        detail:
+          type: string
+        expected:
+          type: number
+        actual:
+          type: number
+        expectedDate:
+          type: string
+        actualDate:
+          type: string
+      required:
+        - status
+        - detail
+    VerificationResult:
+      type: object
+      properties:
+        grantId:
+          type: string
+        recipient:
+          type: string
+        amount:
+          type: number
+        date:
+          type: string
+        status:
+          $ref: "#/components/schemas/CheckStatus"
+        checks:
+          type: object
+          properties:
+            recipientExists:
+              $ref: "#/components/schemas/CheckDetail"
+            amountMatch:
+              $ref: "#/components/schemas/CheckDetail"
+            timingMatch:
+              $ref: "#/components/schemas/CheckDetail"
+            duplicateCheck:
+              $ref: "#/components/schemas/CheckDetail"
+            cumulativeCheck:
+              $ref: "#/components/schemas/CheckDetail"
+            screenshotMatch:
+              $ref: "#/components/schemas/CheckDetail"
+          required:
+            - recipientExists
+            - amountMatch
+            - timingMatch
+      required:
+        - grantId
+        - recipient
+        - amount
+        - date
+        - status
+        - checks
+    VerificationResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerificationResult"
+        summary:
+          type: object
+          properties:
+            total:
+              type: integer
+            passed:
+              type: integer
+            warnings:
+              type: integer
+            failed:
+              type: integer
+          required:
+            - total
+            - passed
+            - warnings
+            - failed
+        tokenModelSyncedAt:
+          type: string
+        financeWorkbookSyncedAt:
+          type: string
+      required:
+        - results
+        - summary
+        - tokenModelSyncedAt
+    SheetsStatusResponse:
+      type: object
+      properties:
+        tokenModelSynced:
+          type: boolean
+        tokenModelSyncedAt:
+          type: string
+        financeWorkbookSynced:
+          type: boolean
+        financeWorkbookSyncedAt:
+          type: string
+        tokenModelTabCount:
+          type: integer
+        financeWorkbookTabCount:
+          type: integer
+      required:
+        - tokenModelSynced
+        - financeWorkbookSynced
+    OcrTransaction:
+      type: object
+      properties:
+        grantId:
+          type: string
+        recipient:
+          type: string
+        amount:
+          type: number
+        date:
+          type: string
+      required:
+        - grantId
+        - recipient
+        - amount
+    OcrResponse:
+      type: object
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/OcrTransaction"
+        rawText:
+          type: string
+        confidence:
+          type: number
+      required:
+        - transactions

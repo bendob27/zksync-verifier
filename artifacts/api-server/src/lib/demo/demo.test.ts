@@ -89,10 +89,14 @@ describe('the demo batch demonstrates what it claims to', () => {
 });
 
 describe('the demo data carries nothing real', () => {
-  it('uses invented grantees and round numbers', async () => {
-    const serialised = JSON.stringify(DEMO_EXPORT_ROWS);
-    for (const forbidden of FORBIDDEN_MARKERS) {
-      expect(serialised).not.toContain(forbidden);
+  it('uses only the invented grantees, so nothing real can drift in', async () => {
+    const invented = new Set([
+      'Acme Labs', 'Northwind Systems', 'Belvedere Research',
+      'Calderon Group', 'Quillfeather Studio', 'Halden Partners', 'Marlowe Ventures',
+    ]);
+    for (const row of DEMO_EXPORT_ROWS) {
+      expect(invented.has(row.recipient), `unexpected recipient: ${row.recipient}`).toBe(true);
+      expect(row.grantName).toMatch(/^[A-Z]{3}\d{3}$/);
     }
   });
 });

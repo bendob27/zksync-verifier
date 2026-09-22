@@ -5,12 +5,12 @@ import path from "path";
 
 // The dashboard is served at the root by default. Override BASE_PATH when hosting
 // it under a sub-path so asset URLs resolve correctly.
-const basePath = process.env.BASE_PATH ?? "/";
+const basePath = process.env.BASE_PATH || "/";
 
 // Vite dev server port, and the API server it proxies /api requests to.
 // Deliberately not PORT: the API server uses that, and a shared .env would collide.
-const port = Number(process.env.WEB_PORT ?? 5173);
-const apiTarget = process.env.API_PROXY_TARGET ?? "http://localhost:8080";
+const port = Number(process.env.WEB_PORT || 5173);
+const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:8080";
 
 export default defineConfig({
   base: basePath,

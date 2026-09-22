@@ -497,7 +497,7 @@ export default function Dashboard() {
                     <ImageIcon className="w-8 h-8 text-gray-300" />
                     <div>
                       <p className="text-sm font-medium text-gray-500">Screenshot verification unavailable</p>
-                      <p className="text-xs text-gray-400 mt-1">Add OPENROUTER_API_KEY to Secrets to enable screenshot verification</p>
+                      <p className="text-xs text-gray-400 mt-1">Set OPENROUTER_API_KEY to enable screenshot verification</p>
                     </div>
                   </div>
                 </div>

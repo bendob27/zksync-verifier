@@ -19,7 +19,7 @@ Each week a batch of ZK token unlocks is queued for approval on a custody platfo
 
 **1. Parse the custody export** (`lib/excel.ts`). Headers are read from row 1 and resolved through alias lists, so `Grant Name` / `Grant ID`, `Token Amount` / `Amount` / `Tokens`, and `Event Date` / `Unlock Date` all work. A missing required column aborts with the list of headers actually found. A row is kept only if `Event Type` is absent or `unlock` **and** `Status` is `PENDING`. Dates are converted `DD/MM/YYYY` → `YYYY-MM-DD`; thousands separators are stripped from amounts. A `Notes` value containing `pause`, `skip`, `no wallet` or `cancel` marks the row as excluded rather than failed.
 
-**2. Load the reference data** (`lib/sheets.ts`), in parallel, behind a 5-minute in-process cache. Neither sheet has a fixed layout, so the header row is discovered by scanning the first 50 rows for the grant-ID header, falling back to a `Total Tokens` marker and then to the first row with ≥5 non-empty cells. Month columns are matched against both the current and the next month label (`Mar 2026`), so a batch straddling a month boundary still resolves. If header discovery fails outright, a raw 100×10 grid is passed downstream instead of throwing. Sheets 429s retry three times with exponential backoff from 1 s; a 403 raises an explicit "share the sheet with the service account" error.
+**2. Load the reference data** (`lib/sheets.ts`), in parallel. The tabular fetch is memoised for five minutes in process; the raw extract serialised into the model prompt is not. Neither sheet has a fixed layout, so the header row is discovered by scanning the first 50 rows for the grant-ID header, falling back to a `Total Tokens` marker and then to the first row with ≥5 non-empty cells. Month columns are matched against both the current and the next month label (`Mar 2026`), so a batch straddling a month boundary still resolves. Both labels come from the server clock, so re-running a previous week's batch resolves against today's months, not the batch's. If header discovery fails outright, a raw 100×10 grid is passed downstream instead of throwing. Sheets 429s retry three times with exponential backoff from 1 s; a 403 raises an explicit "share the sheet with the service account" error.
 
 **3. Extract the screenshots** (`lib/ocr.ts`), if supplied. A vision model returns `{recipient, amount, date}` per queued withdrawal. Amounts arrive in European notation, so `parseEuropeanNumber` disambiguates dot-vs-comma decimals before anything numeric happens.
 
@@ -29,7 +29,7 @@ Each week a batch of ZK token unlocks is queued for approval on a custody platfo
 |---|---|---|---|
 | `recipientExists` | grant located in the schedule, by ID or by name | — | not located |
 | `amountMatch` | `\|Δ\| / expected ≤ 0.001` **and** `\|Δ\| ≤ 1000` tokens | — | anything else, or no match |
-| `timingMatch` | matched row has a non-zero amount in the resolved month column | matched row is 0 or blank for that month | no match |
+| `timingMatch` | the matched row has a non-zero expected amount (see the caveat below) | — | no match |
 | `duplicateCheck` | no prior payment, or none that collides | payment-history fetch failed | prior payment within <1 token **and** ≤1 day |
 | `screenshotMatch` | recipient's screenshot total within `max(0.1%, 1 token)`, or an individual line matches | no screenshot row for that recipient | amounts disagree |
 
@@ -39,13 +39,20 @@ Grant IDs in the export and in the schedule are not reliably the same string (`A
 
 **The deterministic reference engine.** `lib/matcher.ts` implements the same verification with no model in the loop: exact case-insensitive grant-ID matching, nearest-amount selection when a grant has several tranche rows, a ±1 day (`DATE_TOLERANCE_DAYS`) timing window, its own duplicate check, and a cumulative check that prior payments plus this one must not exceed the grant total. Its amount grading is three-way — exact is GREEN, inside both tolerances is YELLOW, outside is RED — and it is where the tolerance values are pinned down. `matcher.test.ts` holds 53 Vitest cases against it, including a "never false-negative" group asserting that every genuinely wrong transaction surfaces as RED.
 
-Known gap, stated plainly: the live route calls the model-assisted path, because real-world ID formatting defeats string equality. The two paths import the same tolerance constants but implement the duplicate check separately, and **the cumulative overpayment check exists only in `matcher.ts`, so it does not run in production.** Consolidating the two onto one engine — with the model used solely for ID resolution — is the obvious next change.
+Known gaps, stated plainly. The live route calls the model-assisted path, because real-world ID formatting defeats string equality, and that path is thinner than the tested engine:
+
+- The cumulative overpayment check exists only in `matcher.ts`, so it does not run in production.
+- `timingMatch` is, by its own comment, "simplified": it passes when the matched row has a non-zero expected amount and never compares the transaction date against a scheduled one. `matcher.ts` does the real ±1 day comparison.
+- Duplicate detection compares against the payment history only; two identical rows inside a single upload are not caught.
+- `checkDuplicate`, `parseDate` and the fuzzy recipient match are duplicated across both files rather than shared.
+
+Consolidating onto one engine — with the model used solely for ID resolution, and every numeric judgement deterministic — is the next change.
 
 **Access control.** `/verify`, `/verify/sheets`, `/sheets`, `/ocr` and `/ocr/status` sit behind `requireAuth`. Sessions are an HMAC-SHA256 signed, `httpOnly` cookie with a server-side 24-hour expiry, verified with a constant-time comparison (`lib/session.ts`); login uses a timing-safe password compare and is rate-limited to 5 attempts per minute per IP. `/healthz` and `/auth` are open by design. The logger redacts `authorization`, `cookie` and `set-cookie`.
 
 ## Stack
 
-pnpm workspace monorepo, TypeScript 5.9 throughout. Express 5 + pino on the server, bundled to a single ESM file with esbuild. React 19 + Vite 7 + Tailwind 4 + Radix on the client. `lib/api-spec/openapi.yaml` is the contract: Orval generates the Zod schemas (`lib/api-zod`) and the React Query client (`lib/api-client-react`) from it, so request and response shapes stay in step across the two sides. ExcelJS for the upload, `googleapis` for the sheets, the `openai` SDK pointed at OpenRouter for both matching and OCR, Vitest for the tests. No database — the service is stateless and holds nothing between requests beyond the 5-minute sheet cache.
+pnpm workspace monorepo, TypeScript 5.9 throughout. Express 5 + pino on the server, bundled to a single ESM file with esbuild. React 19 + Vite 7 + Tailwind 4 + Radix on the client. `lib/api-spec/openapi.yaml` is the contract: Orval generates the Zod schemas (`lib/api-zod`) and the React Query client (`lib/api-client-react`) from it, so both sides are generated from one description. Nothing enforces it at runtime, and the spec does not yet cover `/verify/sheets` or `/ocr/status`. ExcelJS for the upload, `googleapis` for the sheets, the `openai` SDK pointed at OpenRouter for both matching and OCR, Vitest for the tests. No database — the service is stateless and holds nothing between requests beyond the 5-minute sheet cache.
 
 ## Running locally
 

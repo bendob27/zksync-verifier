@@ -1,17 +1,33 @@
 import { Router, type IRouter } from 'express';
 import multer from 'multer';
 import { requireAuth } from '../lib/session';
-import { parseExcelBuffer, getSheetNames } from '../lib/excel';
-import { fetchAllSheetData, fetchRawUnlockData } from '../lib/sheets';
-import { verifyWithAI } from '../lib/ai-matcher';
-import { extractTransactionsFromScreenshots, isApiKeyAvailable } from '../lib/ocr';
+import { fetchRange } from '../lib/sheets';
+import {
+  TOKEN_MODEL_SHEET_ID, FINANCE_WORKBOOK_SHEET_ID, TOKEN_MODEL_TABS,
+  FINANCE_WORKBOOK_TABS, GRANT_ID_HEADER,
+  AMOUNT_TOLERANCE_PERCENT, AMOUNT_TOLERANCE_ABSOLUTE,
+} from '../lib/constants';
+import { readCustodyExport } from '../lib/verification/custodyExport';
+import { runVerification } from '../lib/verification/run';
+import { proposeWithModel } from '../lib/verification/propose';
+import { readCustodyScreenshots } from '../lib/verification/readQueue';
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 11 },
 });
 
 const router: IRouter = Router();
+
+const CONFIG = {
+  scheduleSheetId: TOKEN_MODEL_SHEET_ID,
+  scheduleTab: TOKEN_MODEL_TABS.UNLOCK_SCHEDULES,
+  historySheetId: FINANCE_WORKBOOK_SHEET_ID,
+  historyTab: FINANCE_WORKBOOK_TABS.ALL_CASH_FLOWS,
+  grantIdHeader: GRANT_ID_HEADER,
+  toleranceRelative: AMOUNT_TOLERANCE_PERCENT,
+  toleranceAbsolute: AMOUNT_TOLERANCE_ABSOLUTE,
+};
 
 router.post('/verify/sheets', requireAuth, upload.single('file'), async (req, res) => {
   try {
@@ -19,8 +35,8 @@ router.post('/verify/sheets', requireAuth, upload.single('file'), async (req, re
       res.status(400).json({ error: 'No file uploaded' });
       return;
     }
-    const names = await getSheetNames(req.file.buffer);
-    res.json({ sheetNames: names });
+    const { sheetNames } = await readCustodyExport(req.file.buffer);
+    res.json({ sheetNames });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to read sheet names';
     req.log.error({ err }, 'Sheet names error');
@@ -33,7 +49,7 @@ router.post('/verify', requireAuth, upload.fields([
   { name: 'screenshots', maxCount: 10 },
 ]), async (req, res) => {
   try {
-    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const files = req.files as { [field: string]: Express.Multer.File[] } | undefined;
     const excelFile = files?.file?.[0];
 
     if (!excelFile) {
@@ -41,138 +57,48 @@ router.post('/verify', requireAuth, upload.fields([
       return;
     }
 
-    const filename = excelFile.originalname?.toLowerCase() || '';
+    const filename = excelFile.originalname?.toLowerCase() ?? '';
     if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) {
       res.status(400).json({ error: 'Not an Excel file. Please upload .xlsx' });
       return;
     }
 
-    const sheetName = req.body?.sheetName || undefined;
+    const screenshots = (files?.screenshots ?? []).map((f) => ({
+      buffer: f.buffer,
+      mimeType: f.mimetype,
+    }));
 
-    req.log.info({ filename: excelFile.originalname, size: excelFile.size, sheetName }, 'Parsing Excel file');
+    req.log.info(
+      { filename: excelFile.originalname, size: excelFile.size, screenshots: screenshots.length },
+      'Starting verification run',
+    );
 
-    // Step 1: Parse the Excel file first (we need the grant IDs for the sheet fetch)
-    const excelResult = await parseExcelBuffer(excelFile.buffer, sheetName);
-    const excelGrantIds = excelResult.transactions.map((tx) => tx.grantId);
-
-    // Step 2: Fetch sheet data and raw unlock extract in parallel
-    const [sheetData, unlockExtract] = await Promise.all([
-      fetchAllSheetData(),
-      fetchRawUnlockData(excelGrantIds),
-    ]);
-
-    // Step 3: Process screenshots (OCR) if provided
-    const screenshotFiles = files?.screenshots || [];
-    const imageBuffers = screenshotFiles
-      .filter((f) => f.mimetype.startsWith('image/'))
-      .map((f) => ({ buffer: f.buffer, mimeType: f.mimetype }));
-
-    let ocrTransactions: { recipient: string; amount: number; date?: string }[] = [];
-    let ocrRawText: string | undefined;
-
-    if (imageBuffers.length > 0 && isApiKeyAvailable()) {
-      req.log.info({ imageCount: imageBuffers.length }, 'Running OCR on screenshots');
-      const ocrResult = await extractTransactionsFromScreenshots(imageBuffers);
-      ocrTransactions = ocrResult.transactions;
-      ocrRawText = ocrResult.rawText;
-      req.log.info({ ocrTransactionCount: ocrTransactions.length }, 'OCR extraction complete');
-    }
+    const result = await runVerification(
+      {
+        excel: excelFile.buffer,
+        sheetName: req.body?.sheetName || undefined,
+        screenshots,
+      },
+      CONFIG,
+      {
+        fetchRange,
+        propose: process.env.OPENROUTER_API_KEY ? proposeWithModel : undefined,
+        readScreenshots: process.env.OPENROUTER_API_KEY ? readCustodyScreenshots : undefined,
+        appVersion: process.env.APP_VERSION ?? 'dev',
+      },
+    );
 
     req.log.info(
       {
-        transactionCount: excelResult.transactions.length,
-        scheduleCount: sheetData.unlockSchedules.length,
-        cashFlowCount: sheetData.cashFlows.length,
-        ocrCount: ocrTransactions.length,
-        unlockExtractRows: unlockExtract.rows.length,
-        hasFallback: !!unlockExtract.fallbackGrid,
+        runId: result.provenance.runId,
+        cleared: result.summary.allRequiredChecksPassed,
+        failed: result.summary.failed,
+        needsReview: result.summary.needsReview,
       },
-      'Running AI-powered verification'
+      'Verification run complete',
     );
 
-    // Step 4: Run the AI-powered verification
-    const results = await verifyWithAI(
-      excelResult.transactions,
-      unlockExtract,
-      sheetData.cashFlows,
-      ocrTransactions.length > 0
-        ? ocrTransactions.map((t) => ({
-            recipient: t.recipient,
-            amount: t.amount,
-            date: t.date,
-          }))
-        : undefined,
-      sheetData.cashFlowsFetchFailed
-    );
-
-    const summary = {
-      total: results.length,
-      passed: results.filter((r) => r.status === 'GREEN').length,
-      warnings: results.filter((r) => r.status === 'YELLOW').length,
-      failed: results.filter((r) => r.status === 'RED').length,
-    };
-
-    // Build structured text summary for the dashboard
-    const passedItems = results.filter((r) => r.status === 'GREEN');
-    const failedItems = results.filter((r) => r.status === 'RED');
-    const fyiItems = results.filter((r) => r.status === 'YELLOW');
-
-    // Group by recipient for cleaner summary
-    const uniquePassedRecipients = [...new Set(passedItems.map((r) => r.recipient))];
-    const uniqueFyiRecipients = [...new Set(fyiItems.map((r) => r.recipient))];
-
-    const failedSummaries = failedItems.map((r) => {
-      const screenshotCheck = r.checks.screenshotMatch;
-      const amountCheck = r.checks.amountMatch;
-      let reason = '';
-      if (screenshotCheck?.status === 'RED') {
-        const diff = screenshotCheck.expected && screenshotCheck.actual
-          ? Math.abs(screenshotCheck.expected - screenshotCheck.actual)
-          : 0;
-        reason = diff > 0 ? `${diff.toLocaleString()} ZK discrepancy vs custody queue` : 'screenshot mismatch';
-      } else if (amountCheck?.status === 'RED') {
-        reason = 'amount mismatch vs token model';
-      } else if (r.checks.recipientExists?.status === 'RED') {
-        reason = 'not found in token model';
-      } else if (r.checks.duplicateCheck?.status === 'RED') {
-        reason = 'possible duplicate';
-      } else {
-        reason = 'verification failed';
-      }
-      return `${r.recipient} (${r.grantId}): ${reason}`;
-    });
-
-    // Group failed by recipient to avoid repetition
-    const failedByRecipient = new Map<string, string[]>();
-    for (const item of failedItems) {
-      const reasons = failedByRecipient.get(item.recipient) || [];
-      reasons.push(item.grantId);
-      failedByRecipient.set(item.recipient, reasons);
-    }
-
-    const textSummary = {
-      safeToSign: uniquePassedRecipients.length > 0
-        ? `Safe to sign: ${uniquePassedRecipients.join(', ')}`
-        : 'Safe to sign: none',
-      needsInvestigation: failedSummaries.length > 0
-        ? `Needs investigation: ${failedSummaries.join('; ')}`
-        : 'Needs investigation: none',
-      excluded: uniqueFyiRecipients.length > 0
-        ? `Excluded (PAUSE/no wallet): ${uniqueFyiRecipients.join(', ')}`
-        : 'Excluded: none',
-    };
-
-    res.json({
-      results,
-      summary,
-      textSummary,
-      sheetNames: excelResult.sheetNames,
-      selectedSheet: excelResult.selectedSheet,
-      tokenModelSyncedAt: sheetData.tokenModelSyncedAt,
-      financeWorkbookSyncedAt: sheetData.financeWorkbookSyncedAt,
-      ocrTransactionCount: ocrTransactions.length,
-      ocrRawText: ocrRawText,
-    });
+    res.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Verification failed';
     req.log.error({ err }, 'Verification error');

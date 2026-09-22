@@ -71,7 +71,7 @@ function getNextMonthLabel(): string {
   return `${months[next.getMonth()]} ${next.getFullYear()}`;
 }
 
-async function fetchRange(
+export async function fetchRange(
   sheetId: string,
   range: string,
   retries = MAX_RETRIES

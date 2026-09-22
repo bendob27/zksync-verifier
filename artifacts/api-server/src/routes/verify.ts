@@ -11,6 +11,10 @@ import { readCustodyExport } from '../lib/verification/custodyExport';
 import { runVerification } from '../lib/verification/run';
 import { proposeWithModel } from '../lib/verification/propose';
 import { readCustodyScreenshots } from '../lib/verification/readQueue';
+import {
+  isDemoMode, demoFetchRange, demoReadScreenshots, demoScreenshotStand,
+  buildDemoExport, DEMO_CONFIG,
+} from '../lib/demo/mode';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -73,19 +77,31 @@ router.post('/verify', requireAuth, upload.fields([
       'Starting verification run',
     );
 
+    // A demo instance runs the very same engine against bundled data, reaching nothing
+    // external. Only the four injected dependencies differ.
+    const demo = isDemoMode();
+
     const result = await runVerification(
       {
         excel: excelFile.buffer,
         sheetName: req.body?.sheetName || undefined,
-        screenshots,
+        screenshots: demo && screenshots.length === 0 ? demoScreenshotStand() : screenshots,
       },
-      CONFIG,
-      {
-        fetchRange,
-        propose: process.env.OPENROUTER_API_KEY ? proposeWithModel : undefined,
-        readScreenshots: process.env.OPENROUTER_API_KEY ? readCustodyScreenshots : undefined,
-        appVersion: process.env.APP_VERSION ?? 'dev',
-      },
+      demo
+        ? { ...CONFIG, ...DEMO_CONFIG, toleranceRelative: CONFIG.toleranceRelative, toleranceAbsolute: CONFIG.toleranceAbsolute }
+        : CONFIG,
+      demo
+        ? {
+            fetchRange: demoFetchRange,
+            readScreenshots: demoReadScreenshots,
+            appVersion: process.env.APP_VERSION ?? 'demo',
+          }
+        : {
+            fetchRange,
+            propose: process.env.OPENROUTER_API_KEY ? proposeWithModel : undefined,
+            readScreenshots: process.env.OPENROUTER_API_KEY ? readCustodyScreenshots : undefined,
+            appVersion: process.env.APP_VERSION ?? 'dev',
+          },
     );
 
     req.log.info(
@@ -103,6 +119,27 @@ router.post('/verify', requireAuth, upload.fields([
     const message = err instanceof Error ? err.message : 'Verification failed';
     req.log.error({ err }, 'Verification error');
     res.status(400).json({ error: message });
+  }
+});
+
+// Tells the dashboard whether this is a demo instance, and hands it the sample batch.
+router.get('/demo', (_req, res) => {
+  res.json({ demo: isDemoMode(), password: isDemoMode() ? 'demo' : undefined });
+});
+
+router.get('/demo/sample.xlsx', async (req, res) => {
+  if (!isDemoMode()) {
+    res.status(404).json({ error: 'Not a demo instance' });
+    return;
+  }
+  try {
+    const buffer = await buildDemoExport();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="sample-custody-export.xlsx"');
+    res.send(buffer);
+  } catch (err) {
+    req.log.error({ err }, 'Failed to build the sample export');
+    res.status(500).json({ error: 'Failed to build the sample export' });
   }
 });
 

@@ -15,6 +15,16 @@ export default function Login() {
 
   const { data: authData, isLoading: authLoading } = useCheckAuth();
 
+  // A demo instance publishes its own password, so a visitor can get in with one click.
+  // Auth itself is untouched — there is no bypass.
+  const [demo, setDemo] = useState<{ demo: boolean; password?: string } | null>(null);
+  useEffect(() => {
+    fetch('/api/demo', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setDemo(d))
+      .catch(() => setDemo(null));
+  }, []);
+
   useEffect(() => {
     if (!authLoading && authData?.authenticated) {
       setLocation("/");
@@ -80,6 +90,20 @@ export default function Login() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
+        {demo?.demo && (
+          <div className="mb-4 border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <strong className="font-semibold">Demonstration instance.</strong> It runs on
+            invented data and contacts nothing external.
+            <button
+              type="button"
+              onClick={() => setPassword(demo.password ?? 'demo')}
+              className="ml-1 underline underline-offset-2"
+            >
+              Use the demo password
+            </button>
+          </div>
+        )}
+
             <Input
               type="password"
               placeholder="Dashboard Password"

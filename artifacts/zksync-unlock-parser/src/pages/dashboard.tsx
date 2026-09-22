@@ -109,6 +109,30 @@ export default function Dashboard() {
     }
   };
 
+  // On a demo instance, offer the bundled sample batch. It goes through the ordinary
+  // upload and verify path, so what a visitor sees is the real flow.
+  const [isDemo, setIsDemo] = useState(false);
+  useEffect(() => {
+    fetch('/api/demo', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setIsDemo(Boolean(d?.demo)))
+      .catch(() => setIsDemo(false));
+  }, []);
+
+  const loadSampleBatch = async () => {
+    setFileError(null);
+    try {
+      const response = await fetch('/api/demo/sample.xlsx', { credentials: 'include' });
+      if (!response.ok) throw new Error('Could not load the sample batch');
+      const blob = await response.blob();
+      await validateAndSetFile(
+        new File([blob], 'sample-custody-export.xlsx', { type: blob.type }),
+      );
+    } catch {
+      setFileError('Could not load the sample batch. Try again.');
+    }
+  };
+
   const validateAndSetFile = async (f: File) => {
     if (f.name.endsWith('.xlsx') || f.name.endsWith('.xls')) {
       setFile(f);
@@ -570,6 +594,17 @@ export default function Dashboard() {
                     screenshots.length > 0 ? `Verify Now (+ ${screenshots.length} screenshot${screenshots.length > 1 ? 's' : ''})` : "Verify Now"
                   )}
                 </Button>
+              ) : isDemo ? (
+                <>
+                  <Button size="lg" className="w-full max-w-sm" onClick={loadSampleBatch}>
+                    Load the sample batch
+                  </Button>
+                  <p className="text-xs text-muted-foreground max-w-sm text-center">
+                    Seven invented payments against an invented schedule. Two are clean; the
+                    rest show a duplicate, a breached cap, a wrong-month amount, a missing
+                    limit, and a paused payment still sitting in the queue.
+                  </p>
+                </>
               ) : (
                 <p className="text-sm text-muted-foreground">Upload an Excel file to start</p>
               )}

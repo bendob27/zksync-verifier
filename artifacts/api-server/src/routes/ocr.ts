@@ -1,19 +1,21 @@
 import { Router, type IRouter } from 'express';
 import multer from 'multer';
 import { requireAuth } from '../lib/session';
-import { extractTransactionsFromScreenshots, isApiKeyAvailable } from '../lib/ocr';
+import { readCustodyScreenshots } from '../lib/verification/readQueue';
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 10 },
 });
 
 const router: IRouter = Router();
 
-router.get('/ocr/status', requireAuth, (req, res) => {
-  res.json({ available: isApiKeyAvailable() });
+router.get('/ocr/status', requireAuth, (_req, res) => {
+  res.json({ available: Boolean(process.env.OPENROUTER_API_KEY) });
 });
 
+// Reads screenshots on their own, for checking what the queue contains before running a
+// full verification. The result is evidence to look at, not a verdict.
 router.post('/ocr', requireAuth, upload.array('files', 10), async (req, res) => {
   try {
     const files = req.files as Express.Multer.File[] | undefined;
@@ -22,27 +24,26 @@ router.post('/ocr', requireAuth, upload.array('files', 10), async (req, res) => 
       return;
     }
 
-    const imageBuffers = files
-      .filter((f) => f.mimetype.startsWith('image/'))
-      .map((f) => ({
-        buffer: f.buffer,
-        mimeType: f.mimetype,
-      }));
+    const { lines, failures } = await readCustodyScreenshots(
+      files.map((f) => ({ buffer: f.buffer, mimeType: f.mimetype })),
+    );
 
-    if (imageBuffers.length === 0) {
-      res.status(400).json({ error: 'No valid image files found. Please upload PNG or JPG files.' });
-      return;
-    }
-
-    req.log.info({ imageCount: imageBuffers.length }, 'Running OCR extraction');
-
-    const result = await extractTransactionsFromScreenshots(imageBuffers);
-
-    res.json(result);
+    res.json({
+      transactions: lines.map((l) => ({
+        recipient: l.recipient,
+        amount: l.amount,
+        date: l.date,
+        source: l.sourceRef,
+      })),
+      // Reported explicitly: a partial read must not look like a complete one.
+      imagesRead: files.length - failures.length,
+      imagesTotal: files.length,
+      failures,
+    });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'OCR extraction failed';
-    req.log.error({ err }, 'OCR error');
-    res.status(500).json({ error: message });
+    const message = err instanceof Error ? err.message : 'Failed to read screenshots';
+    req.log.error({ err }, 'Screenshot read error');
+    res.status(400).json({ error: message });
   }
 });
 

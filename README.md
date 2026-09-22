@@ -17,38 +17,58 @@ Each week a batch of ZK token unlocks is queued for approval on a custody platfo
 
 ## How the check works
 
-**1. Parse the custody export** (`lib/excel.ts`). Headers are read from row 1 and resolved through alias lists, so `Grant Name` / `Grant ID`, `Token Amount` / `Amount` / `Tokens`, and `Event Date` / `Unlock Date` all work. A missing required column aborts with the list of headers actually found. A row is kept only if `Event Type` is absent or `unlock` **and** `Status` is `PENDING`. Dates are converted `DD/MM/YYYY` → `YYYY-MM-DD`; thousands separators are stripped from amounts. A `Notes` value containing `pause`, `skip`, `no wallet` or `cancel` marks the row as excluded rather than failed.
+**1. Read the custody export** (`lib/verification/custodyExport.ts`). Cell *values* are read, not their rendered text, so a native date or numeric cell keeps its type. Every row below the header is accounted for: rows that are not unlock events, or not `PENDING`, are listed as skipped with a reason; an amount that cannot be read is recorded as unreadable rather than becoming zero. Each row is given a stable payment id derived from its position and contents, so a re-run can be compared with an earlier one.
 
-**2. Load the reference data** (`lib/sheets.ts`), in parallel. The tabular fetch is memoised for five minutes in process; the raw extract serialised into the model prompt is not. Neither sheet has a fixed layout, so the header row is discovered by scanning the first 50 rows for the grant-ID header, falling back to a `Total Tokens` marker and then to the first row with ≥5 non-empty cells. Month columns are matched against both the current and the next month label (`Mar 2026`), so a batch straddling a month boundary still resolves. Both labels come from the server clock, so re-running a previous week's batch resolves against today's months, not the batch's. If header discovery fails outright, a raw 100×10 grid is passed downstream instead of throwing. Sheets 429s retry three times with exponential backoff from 1 s; a 403 raises an explicit "share the sheet with the service account" error.
+**2. Work out which schedule columns the batch needs** (`lib/verification/period.ts`). The schedule is laid out wide — one row per grant, one column per month — so an instalment is a single cell. A payment's *own* event date selects its column, which means a batch straddling a month end has each row judged against its own month, and re-running last quarter's batch reads the columns it read at the time. Nothing consults the server clock.
 
-**3. Extract the screenshots** (`lib/ocr.ts`), if supplied. A vision model returns `{recipient, amount, date}` per queued withdrawal. Amounts arrive in European notation, so `parseEuropeanNumber` disambiguates dot-vs-comma decimals before anything numeric happens.
+**3. Load the sources for exactly those periods** (`lib/verification/loadSources.ts`), plus every earlier column so "scheduled to date" can be totalled. Truncation is detected: if a sheet fills the read window, the run says so. An empty payment history is treated as a failure to load, not as "nothing has ever been paid".
 
-**4. Run the checks** (`lib/ai-matcher.ts`). Rows flagged in step 1 skip verification entirely and come back YELLOW / `FYI`. For the rest:
+**4. Resolve each payment to one schedule row** (`lib/verification/resolve.ts`). Most rows resolve deterministically. Only the leftovers go to a model, and it is asked one question — *which row?* — answerable only with a row id supplied to it. It is never asked for, and never shown a slot for, an amount, a date or a cap. Its answer is validated: every requested payment must be accounted for exactly once, and an id we did not offer is rejected. A missing, duplicated, invented or declined answer becomes NEEDS REVIEW.
 
-| Check | GREEN | YELLOW | RED |
-|---|---|---|---|
-| `recipientExists` | grant located in the schedule, by ID or by name | — | not located |
-| `amountMatch` | `\|Δ\| / expected ≤ 0.001` **and** `\|Δ\| ≤ 1000` tokens | — | anything else, or no match |
-| `timingMatch` | the matched row has a non-zero expected amount (see the caveat below) | — | no match |
-| `duplicateCheck` | no prior payment, or none that collides | payment-history fetch failed | prior payment within <1 token **and** ≤1 day |
-| `screenshotMatch` | recipient's screenshot total within `max(0.1%, 1 token)`, or an individual line matches | no screenshot row for that recipient | amounts disagree |
+**5. Apply the deterministic checks** (`lib/verification/checks.ts`). Every compared value is read from a fetched record.
 
-Grant IDs in the export and in the schedule are not reliably the same string (`ACM001` vs `ACM-001`, or a row reachable only through the name column), so ID-to-row resolution is delegated to a model. **Its amount assertion is not trusted.** The model returns an `amountMatches` boolean, but that field feeds only a summary counter — never a verdict. `amountMatch` is recomputed server-side from the model's `expectedAmount` and the export amount against `AMOUNT_TOLERANCE_PERCENT = 0.001` and `AMOUNT_TOLERANCE_ABSOLUTE = 1000` (`lib/constants.ts`), both of which must hold. The model's prose survives only as commentary appended to the detail string. Recipient grouping is deterministic too: the custody platform bundles several grants to one counterparty into a single withdrawal, so transactions are grouped by recipient and the group total is compared against the summed screenshot lines, with fuzzy recipient matching (lowercased, non-alphanumerics stripped, equality or containment either way).
+| Check | Passes when | Rule |
+|---|---|---|
+| `grantResolved` | the payment maps to exactly one schedule row | an ambiguous match is never a match |
+| `recipientMatches` | the recipient equals the scheduled grantee | a partial name match needs review, it is not accepted |
+| `instalmentScheduled` | an instalment exists for the payment's own month | R1 |
+| `amountMatches` | rows sharing a grant and month sum exactly to that month's cell | R2, R3 |
+| `notDuplicated` | no matching payment in the history, and no unexplained repeat in the upload | — |
+| `withinGrantCap` | paid to date + the whole batch ≤ the grant's total | R4a |
+| `withinScheduledToDate` | paid to date + the whole batch ≤ everything scheduled by that month | R4b |
+| `custodyQueueReconciled` | expected and observed totals agree, both directions | — |
 
-**Aggregation.** A transaction's overall status is the worst of `recipientExists`, `amountMatch`, `timingMatch` and `duplicateCheck`. `screenshotMatch` is shown in the detail panel but deliberately excluded from the roll-up, since OCR noise should not block an otherwise clean batch. GREEN → PASS, YELLOW → FYI, RED → FAIL. A failed payment-history fetch degrades `duplicateCheck` to YELLOW rather than reporting a GREEN it cannot justify, and if the model call throws, every transaction is forced RED with the error in the detail — the check fails closed, never open. The response also carries a counts summary and a three-line plain-text summary (safe to sign / needs investigation / excluded), which the dashboard exports as CSV and PDF.
+**6. Reconcile the custody queue** (`lib/verification/queue.ts`), in both directions: every expected payment must appear, and every queued transaction must be explained. Totals are compared per recipient, which handles the platform bundling several grants for one counterparty into a single withdrawal — and means one observed transaction cannot satisfy two obligations. Transactions appearing in more than one screenshot are flagged rather than silently deduplicated or double-counted. **Unlike the previous version, this check affects the result.**
 
-**The deterministic reference engine.** `lib/matcher.ts` implements the same verification with no model in the loop: exact case-insensitive grant-ID matching, nearest-amount selection when a grant has several tranche rows, a ±1 day (`DATE_TOLERANCE_DAYS`) timing window, its own duplicate check, and a cumulative check that prior payments plus this one must not exceed the grant total. Its amount grading is three-way — exact is GREEN, inside both tolerances is YELLOW, outside is RED — and it is where the tolerance values are pinned down. `matcher.test.ts` holds 53 Vitest cases against it, including a "never false-negative" group asserting that every genuinely wrong transaction surfaces as RED.
+### The rules being applied
 
-Known gaps, stated plainly. The live route calls the model-assisted path, because real-world ID formatting defeats string equality, and that path is thinner than the tested engine:
+- **R1 — timing.** A payment's own event date selects the instalment it pays.
+- **R2 — amount.** Exact matches pass. A difference within both 0.1% and 1,000 tokens needs review. Anything else fails. A near miss is never a silent pass.
+- **R3 — splitting.** One instalment may be paid across several rows, so amounts are compared as a per-(grant, month) group total. Identical repeated rows are surfaced for review rather than failed.
+- **R4 — exposure.** Checked against both the grant's lifetime cap and the amount scheduled up to that month, counting the whole batch rather than one row at a time.
 
-- The cumulative overpayment check exists only in `matcher.ts`, so it does not run in production.
-- `timingMatch` is, by its own comment, "simplified": it passes when the matched row has a non-zero expected amount and never compares the transaction date against a scheduled one. `matcher.ts` does the real ±1 day comparison.
-- Duplicate detection compares against the payment history only; two identical rows inside a single upload are not caught.
-- `checkDuplicate`, `parseDate` and the fuzzy recipient match are duplicated across both files rather than shared.
+### What each outcome means
 
-Consolidating onto one engine — with the model used solely for ID resolution, and every numeric judgement deterministic — is the next change.
+- **PASS** — the check ran and the payment satisfied it.
+- **FAIL** — the check ran and found a definite discrepancy.
+- **NEEDS REVIEW** — the check could not be completed, or its evidence is ambiguous, stale or unreadable.
+- **EXCLUDED** — deliberately not being paid (paused, cancelled). Never an implicit pass, and still reported if it is sitting in the queue.
 
-**Access control.** `/verify`, `/verify/sheets`, `/sheets`, `/ocr` and `/ocr/status` sit behind `requireAuth`. Sessions are an HMAC-SHA256 signed, `httpOnly` cookie with a server-side 24-hour expiry, verified with a constant-time comparison (`lib/session.ts`); login uses a timing-safe password compare and is rate-limited to 5 attempts per minute per IP. `/healthz` and `/auth` are open by design. The logger redacts `authorization`, `cookie` and `set-cookie`.
+A batch reports **all required checks passed** only when every required check on every non-excluded payment actually ran and passed, no queue finding is outstanding, and no source was degraded. Absence of evidence never counts as a pass: an unreadable amount, a truncated read, an empty payment history, a missing cap, or an unreadable screenshot each produce NEEDS REVIEW and block a clean result.
+
+Amounts are held as integer micro-units (`lib/verification/money.ts`), so comparisons are exact and a value carrying more precision than can be represented is rejected rather than rounded.
+
+### Evidence kept for each run
+
+Each run records a run id, the time, the app version, the schedule periods loaded, content fingerprints of every source, and the degradations encountered. A later change to the schedule or history produces a different fingerprint, so an earlier result can be shown to be stale. Re-run before approving.
+
+### Known limitations
+
+- **Other pending batches are not visible.** Exposure counts the payment history plus the batch being checked. No source in this system records payments approved elsewhere but not yet settled, so cross-batch duplication is *not* checked. Do not read a pass as ruling it out.
+- **Payment destinations are not verified.** The wallet address is carried through and displayed, but there is no authoritative destination record to check it against, so a payment to the wrong address for the right grantee would not be caught.
+- **A grant with several schedule rows for one month resolves to NEEDS REVIEW** rather than being summed. Summing would be a business rule that has not been approved; the conservative reading cannot produce a false pass.
+- **Screenshots are candidate evidence.** A structured custody export would be stronger. Reading is per-image, and a failed image is reported rather than hidden, but a queue check resting on screenshots is only as good as the images supplied.
+- **No historical validation has been performed.** The suite below is synthetic. See `docs/historical-replay.md` for replaying real batches privately against human-checked answers.
 
 ## Stack
 
@@ -61,7 +81,7 @@ pnpm install
 cp .env.example .env     # then fill in the required values
 pnpm dev                 # API on :8080, Vite on :5173 proxying /api to it
 
-pnpm test                # Vitest
+pnpm test                # Vitest — 123 cases, all against the live verification path
 pnpm typecheck
 pnpm build
 pnpm --filter @workspace/api-spec codegen   # regenerate client + Zod schemas from openapi.yaml
@@ -93,16 +113,25 @@ The API refuses to start unless every required variable below is present, and un
 artifacts/
   api-server/                    Express 5 API
     src/routes/                  /healthz /auth /verify /sheets /ocr
-    src/lib/matcher.ts           deterministic verification engine
-    src/lib/matcher.test.ts      53 Vitest cases pinning the tolerances
-    src/lib/ai-matcher.ts        model-assisted matching + server-side amount gate
-    src/lib/sheets.ts            Sheets fetch, header discovery, retry, cache
-    src/lib/excel.ts             custody export parser
-    src/lib/ocr.ts               screenshot extraction, European number parsing
+    src/lib/verification/        the verification engine (123 Vitest cases)
+      money.ts                   exact token arithmetic in integer micro-units
+      period.ts                  dates, schedule periods, batch period selection
+      sources.ts                 validated schedule and payment-history records
+      custodyExport.ts           .xlsx reader with full row accounting
+      loadSources.ts             period-aware sheet loading, truncation detection
+      resolve.ts                 grant identity resolution; the model's only role
+      checks.ts                  the deterministic checks (R1-R4)
+      queue.ts                   two-directional custody queue reconciliation
+      engine.ts                  orchestration, provenance, run summary
+      present.ts                 one result shape for UI, CSV and PDF
+      run.ts                     the service the endpoint calls
+    src/lib/sheets.ts            Google Sheets client, retry
     src/lib/session.ts           signed session cookie, requireAuth
     src/lib/config.ts            boot-time environment validation
     src/lib/constants.ts         tolerances, tab names, retry policy
   zksync-unlock-parser/          React + Vite dashboard, CSV and PDF export
+docs/
+  historical-replay.md           replaying real batches privately against human answers
 lib/
   api-spec/                      openapi.yaml + Orval config (the contract)
   api-zod/                       generated Zod schemas and types

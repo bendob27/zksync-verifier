@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { logger } from './logger';
 import type { OcrTransaction } from './types';
+import { OPENROUTER_MODEL } from './constants';
 
 export function parseEuropeanNumber(str: string): number {
   if (typeof str === 'number') return str;
@@ -49,7 +50,7 @@ export async function extractTransactionsFromScreenshots(
       const mediaType = image.mimeType;
 
       const response = await client.chat.completions.create({
-        model: 'anthropic/claude-opus-4-6',
+        model: OPENROUTER_MODEL,
         max_tokens: 4096,
         messages: [
           {

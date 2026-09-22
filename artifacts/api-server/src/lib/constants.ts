@@ -22,5 +22,9 @@ export const FINANCE_WORKBOOK_TABS = {
   ALL_CASH_FLOWS: process.env.CASH_FLOWS_TAB ?? 'Cash Flows',
 };
 
+// OpenRouter model slug. Note the dot: `claude-opus-4-6` is not a valid slug and
+// every request with it 404s.
+export const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? 'anthropic/claude-opus-4.6';
+
 export const MAX_RETRIES = 3;
 export const RETRY_BASE_DELAY_MS = 1000;

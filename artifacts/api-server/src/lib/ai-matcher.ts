@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { logger } from './logger';
-import { AMOUNT_TOLERANCE_PERCENT, AMOUNT_TOLERANCE_ABSOLUTE } from './constants';
+import { AMOUNT_TOLERANCE_PERCENT, AMOUNT_TOLERANCE_ABSOLUTE, OPENROUTER_MODEL } from './constants';
 import type {
   CheckStatus,
   CheckDetail,
@@ -515,7 +515,7 @@ async function callClaudeForMatching(
   });
 
   const response = await client.chat.completions.create({
-    model: 'anthropic/claude-opus-4-6',
+    model: OPENROUTER_MODEL,
     max_tokens: 8192,
     messages: [
       {

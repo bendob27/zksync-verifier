@@ -18,7 +18,7 @@ import {
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 11 },
+  limits: { fileSize: 4 * 1024 * 1024 /* stays under the 4.5 MB serverless body cap */, files: 11 },
 });
 
 const router: IRouter = Router();

@@ -6,7 +6,6 @@
  * schedule in code. Validation of the answer happens in resolve.ts, not here.
  */
 
-import OpenAI from 'openai';
 import { logger } from '../logger';
 import { OPENROUTER_MODEL } from '../constants';
 import type { ProposeFn, ResolverProposal } from './resolve';
@@ -17,6 +16,7 @@ export const proposeWithModel: ProposeFn = async ({ payments, offers }) => {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is not set');
 
+  const { default: OpenAI } = await import('openai');
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey,

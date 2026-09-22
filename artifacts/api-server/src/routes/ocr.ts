@@ -5,7 +5,7 @@ import { readCustodyScreenshots } from '../lib/verification/readQueue';
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 10 },
+  limits: { fileSize: 4 * 1024 * 1024 /* stays under the 4.5 MB serverless body cap */, files: 10 },
 });
 
 const router: IRouter = Router();

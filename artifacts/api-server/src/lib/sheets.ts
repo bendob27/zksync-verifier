@@ -1,4 +1,3 @@
-import { google } from 'googleapis';
 import { logger } from './logger';
 import {
   TOKEN_MODEL_SHEET_ID,
@@ -32,20 +31,22 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedSheetData: SheetData | null = null;
 let cacheTimestamp = 0;
 
-function getAuth() {
+// googleapis is large and is loaded on first use rather than at import time. A demo
+// instance never reaches this code, so it never pays for the module at all — and a
+// serverless deployment of the demo does not need the package present to cold-start.
+async function getSheetsClient() {
+  const { google } = await import('googleapis');
+
   const credentialsJson = process.env.GOOGLE_CREDENTIALS;
   if (!credentialsJson) {
     throw new Error('GOOGLE_CREDENTIALS environment variable is not set');
   }
-  const credentials = JSON.parse(credentialsJson);
-  return new google.auth.GoogleAuth({
-    credentials,
+  const auth = new google.auth.GoogleAuth({
+    credentials: JSON.parse(credentialsJson),
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
   });
-}
 
-function getSheetsClient() {
-  return google.sheets({ version: 'v4', auth: getAuth() });
+  return google.sheets({ version: 'v4', auth });
 }
 
 function colIndexToLetter(idx: number): string {
@@ -76,7 +77,7 @@ export async function fetchRange(
   range: string,
   retries = MAX_RETRIES
 ): Promise<string[][]> {
-  const sheets = getSheetsClient();
+  const sheets = await getSheetsClient();
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const response = await sheets.spreadsheets.values.get({
@@ -107,7 +108,7 @@ async function fetchBatchRanges(
   sheetId: string,
   ranges: string[]
 ): Promise<string[][][]> {
-  const sheets = getSheetsClient();
+  const sheets = await getSheetsClient();
   const response = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: sheetId,
     ranges,

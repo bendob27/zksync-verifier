@@ -6,7 +6,6 @@
  * a partial read from looking like a completed reconciliation.
  */
 
-import OpenAI from 'openai';
 import { logger } from '../logger';
 import { OPENROUTER_MODEL } from '../constants';
 import type { ScreenshotReader } from './run';
@@ -30,6 +29,7 @@ export const readCustodyScreenshots: ScreenshotReader = async (images) => {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is not set');
 
+  const { default: OpenAI } = await import('openai');
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey,

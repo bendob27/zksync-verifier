@@ -597,12 +597,12 @@ export default function Dashboard() {
               ) : isDemo ? (
                 <>
                   <Button size="lg" className="w-full max-w-sm" onClick={loadSampleBatch}>
-                    Load the sample batch
+                    Run a verification
                   </Button>
                   <p className="text-xs text-muted-foreground max-w-sm text-center">
-                    Seven invented payments against an invented schedule. Two are clean; the
-                    rest show a duplicate, a breached cap, a wrong-month amount, a missing
-                    limit, and a paused payment still sitting in the queue.
+                    Loads a weekly batch of seven payments and reconciles it against the
+                    unlock schedule, the payment history and the custody queue. Figures are
+                    illustrative.
                   </p>
                 </>
               ) : (

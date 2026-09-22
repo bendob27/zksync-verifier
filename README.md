@@ -2,6 +2,12 @@
 
 [![CI](https://github.com/bendob27/zksync-verifier/actions/workflows/ci.yml/badge.svg)](https://github.com/bendob27/zksync-verifier/actions/workflows/ci.yml)
 
+**Live demo: https://zksync-verifier.vercel.app** — password `demo`, then "Load the sample
+batch". It runs the real verification engine against invented data and contacts nothing
+external: no spreadsheet, no AI provider, no credentials. Seven payments, each showing a
+different check — two clean, plus a duplicate, a breached cap, a wrong-month amount, a
+missing limit, and a paused payment still sitting in the custody queue.
+
 ## What it does
 
 Each week a batch of ZK token unlocks is queued for approval on a custody platform. This tool reconciles that queue against the sources of truth — the unlock schedule and the payment history — before anyone signs. It parses the custody export, matches every line to the unlock scheduled for that grant in that month, confirms the payment has not already gone out, and returns a per-transaction PASS / FYI / FAIL verdict with the arithmetic behind each check.

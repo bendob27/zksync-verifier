@@ -46,7 +46,9 @@ export function validateEnv(): void {
     }
   }
 
-  if (process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGIN) {
+  // A demo instance serves its own dashboard from the same origin and holds nothing
+  // worth stealing, so it does not need an origin allow-list. A real deployment does.
+  if (!demo && process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGIN) {
     throw new Error(
       'CORS_ORIGIN must be set in production. Without it CORS reflects any origin while ' +
         'credentials are enabled, which would let any site call this API as a logged-in user.',

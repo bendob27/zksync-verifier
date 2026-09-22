@@ -20,6 +20,7 @@ async function buildAll() {
     entryPoints: [
       path.resolve(artifactDir, "src/index.ts"),
       path.resolve(artifactDir, "src/app.ts"),
+      path.resolve(artifactDir, "src/lib/config.ts"),
     ],
     platform: "node",
     bundle: true,

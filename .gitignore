@@ -56,3 +56,5 @@ Thumbs.db
 *.pem
 service-account*.json
 *-credentials.json
+.vercel
+.env*

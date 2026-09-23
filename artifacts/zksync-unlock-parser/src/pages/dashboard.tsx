@@ -422,11 +422,11 @@ export default function Dashboard() {
                 <>
                   <div className="flex items-center gap-1.5">
                     <div className={cn("w-2 h-2 rounded-full", sheetsStatus.tokenModelSynced ? "bg-[#16a34a]" : "bg-[#dc2626]")} />
-                    <span>Token Model: {sheetsStatus.tokenModelSyncedAt ? `synced ${formatDistanceToNow(new Date(sheetsStatus.tokenModelSyncedAt))} ago` : 'not synced'}</span>
+                    <span>Unlock schedule: {sheetsStatus.tokenModelSyncedAt ? `synced ${formatDistanceToNow(new Date(sheetsStatus.tokenModelSyncedAt))} ago` : 'not synced'}</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <div className={cn("w-2 h-2 rounded-full", sheetsStatus.financeWorkbookSynced ? "bg-[#16a34a]" : "bg-[#dc2626]")} />
-                    <span>Finance WB: {sheetsStatus.financeWorkbookSyncedAt ? `synced ${formatDistanceToNow(new Date(sheetsStatus.financeWorkbookSyncedAt))} ago` : 'not synced'}</span>
+                    <span>Payment history: {sheetsStatus.financeWorkbookSyncedAt ? `synced ${formatDistanceToNow(new Date(sheetsStatus.financeWorkbookSyncedAt))} ago` : 'not synced'}</span>
                   </div>
                   <button onClick={() => refetchSheets()} className="hover:text-foreground transition-colors p-1" aria-label="Refresh sync status">
                     <RefreshCw className="w-3 h-3" />
@@ -656,9 +656,9 @@ export default function Dashboard() {
             <ResultsTable data={results.results} />
 
             <div className="mt-6 pb-6 flex items-center gap-6 text-xs text-muted-foreground">
-              <span>Token Model: synced {results.tokenModelSyncedAt ? formatDistanceToNow(new Date(results.tokenModelSyncedAt)) + ' ago' : 'unknown'}</span>
+              <span>Unlock schedule: synced {results.tokenModelSyncedAt ? formatDistanceToNow(new Date(results.tokenModelSyncedAt)) + ' ago' : 'unknown'}</span>
               {results.financeWorkbookSyncedAt && (
-                <span>Finance Workbook: synced {formatDistanceToNow(new Date(results.financeWorkbookSyncedAt))} ago</span>
+                <span>Payment history: synced {formatDistanceToNow(new Date(results.financeWorkbookSyncedAt))} ago</span>
               )}
             </div>
           </div>
@@ -994,11 +994,11 @@ function SingleRow({ row, rowKey, isExpanded, onToggle, isNested = false }: {
                 className="overflow-hidden"
               >
                 <div className="p-6 grid grid-cols-3 gap-4">
-                  <CheckDetailCard title="Recipient & Grant" check={row.checks.recipientExists} label="Token Model" />
-                  <CheckDetailCard title="Amount Match" check={row.checks.amountMatch} label="Token Model" isCurrency />
-                  <CheckDetailCard title="Timing Match" check={row.checks.timingMatch} label="Token Model" isDate />
+                  <CheckDetailCard title="Recipient & Grant" check={row.checks.recipientExists} label="Unlock schedule" />
+                  <CheckDetailCard title="Amount Match" check={row.checks.amountMatch} label="Unlock schedule" isCurrency />
+                  <CheckDetailCard title="Timing Match" check={row.checks.timingMatch} label="Unlock schedule" isDate />
                   {row.checks.duplicateCheck && (
-                    <CheckDetailCard title="Duplicate Check" check={row.checks.duplicateCheck} label="Finance Workbook" />
+                    <CheckDetailCard title="Duplicate Check" check={row.checks.duplicateCheck} label="Payment history" />
                   )}
                   {row.checks.cumulativeCheck && (
                     <CheckDetailCard title="Cumulative Limits" check={row.checks.cumulativeCheck} label="Vesting Schedule" />

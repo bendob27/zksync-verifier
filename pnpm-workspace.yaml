@@ -1,7 +1,6 @@
 packages:
   - artifacts/*
   - lib/*
-  - scripts
 
 autoInstallPeers: false
 
@@ -20,7 +19,6 @@ catalog:
   react-dom: 19.1.0
   tailwind-merge: 3.5.0
   tailwindcss: ^4.1.14
-  tsx: ^4.21.0
   vite: ^7.3.0
   zod: ^4.1.13
 

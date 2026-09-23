@@ -52,9 +52,10 @@ Thumbs.db
 .env
 .env.*
 *.env
-!.env.example
 *.pem
 service-account*.json
 *-credentials.json
 .vercel
-.env*
+
+# The template is the one env file that belongs in the repo. Keep this last.
+!.env.example

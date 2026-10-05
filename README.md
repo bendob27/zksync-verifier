@@ -1,10 +1,8 @@
 # Payment Batch Verifier
 
-[![CI](https://github.com/bendob27/zksync-verifier/actions/workflows/ci.yml/badge.svg)](https://github.com/bendob27/zksync-verifier/actions/workflows/ci.yml)
-
-Checks a batch of scheduled token payments before anyone approves it. Approved payments
-cannot be reversed, so every payment gets a verdict with the arithmetic behind it, and
-the approver signs on evidence instead of by eye.
+Checks a batch of scheduled payments before anyone approves it. Approved payments are
+hard to reverse, so every payment gets a verdict with the arithmetic behind it, and the
+approver signs on evidence instead of by eye.
 
 A live demo running on invented data is available on request.
 
